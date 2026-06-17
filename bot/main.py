@@ -16,6 +16,8 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from config.config import BOT_TOKEN, LOG_LEVEL, validate_config
 from bot.models.db import init_db
 from bot.handlers.common import router as common_router
+from bot.handlers.war import router as war_router
+from bot.services.scheduler import setup_scheduler, scheduler
 
 
 def setup_logging() -> None:
@@ -60,17 +62,22 @@ async def main() -> None:
 
     # Register routers
     dp.include_router(common_router)
+    dp.include_router(war_router)
     # Future routers will be added here:
-    # dp.include_router(war_router)
     # dp.include_router(conspiracy_router)
     # dp.include_router(puppet_router)
     # dp.include_router(alliance_router)
+
+    # Start APScheduler (economy tick, daily tick)
+    setup_scheduler(bot)
+    logger.info("⏰ Scheduler started")
 
     logger.info("👑 Bot is ready! Starting polling...")
 
     try:
         await dp.start_polling(bot)
     finally:
+        scheduler.shutdown(wait=False)
         await bot.session.close()
         logger.info("Bot stopped.")
 

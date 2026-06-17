@@ -37,12 +37,25 @@ async def start_with_deeplink(message: Message, command: CommandObject) -> None:
     args = command.args or ""
 
     if args.startswith("conspiracy_"):
-        # Will be handled in conspiracy handler (Етап 6)
-        await message.answer("🗡️ Змова буде доступна в наступному оновленні!")
+        # Extract chat_id from deep link: conspiracy_{chat_id}
+        try:
+            target_chat_id = int(args.split("_", 1)[1])
+        except (ValueError, IndexError):
+            await message.answer("❌ Невірне посилання на змову.")
+            return
+
+        from bot.handlers.conspiracy import handle_conspiracy_deeplink
+        result = await handle_conspiracy_deeplink(
+            user_id=message.from_user.id,
+            chat_id=target_chat_id,
+            bot=message.bot,
+        )
+        await message.answer(result)
         return
 
     # Default: register the user
     await _register_user(message)
+
 
 
 @router.message(CommandStart())

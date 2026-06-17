@@ -55,6 +55,12 @@ def conspiracy_keyboard(conspiracy_id: int) -> InlineKeyboardMarkup:
     ])
 
 
+class AllianceInviteCallback(CallbackData, prefix="ally"):
+    """Callback for alliance invite accept/decline buttons."""
+    action: str           # 'accept' | 'decline'
+    alliance_id: int
+
+
 def event_treasure_keyboard(event_id: str) -> InlineKeyboardMarkup:
     """Build the treasure claim keyboard for first-click events."""
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -63,6 +69,26 @@ def event_treasure_keyboard(event_id: str) -> InlineKeyboardMarkup:
                 text="💰 Забрати скарб!",
                 callback_data=EventClaimCallback(
                     action="claim", event_id=event_id
+                ).pack(),
+            ),
+        ],
+    ])
+
+
+def alliance_invite_keyboard(alliance_id: int) -> InlineKeyboardMarkup:
+    """Build the accept/decline keyboard for alliance invitations."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="✅ Прийняти присягу",
+                callback_data=AllianceInviteCallback(
+                    action="accept", alliance_id=alliance_id
+                ).pack(),
+            ),
+            InlineKeyboardButton(
+                text="❌ Відхилити",
+                callback_data=AllianceInviteCallback(
+                    action="decline", alliance_id=alliance_id
                 ).pack(),
             ),
         ],
