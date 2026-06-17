@@ -10,7 +10,7 @@ from aiogram import Bot, Router
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
 
-from sqlalchemy import select
+from sqlalchemy import select, func
 
 from bot.models.db import (
     AsyncSessionLocal,
@@ -44,20 +44,25 @@ async def attack_handler(message: Message, bot: Bot) -> None:
     """
     async with AsyncSessionLocal() as session:
         # --- Parse arguments ---
-        args = message.text.split(maxsplit=2)
-        if len(args) < 3:
+        # Format: /attack @username назва_замку кількість
+        # Example: /attack @rival Кастерлі Рок 200
+        words = message.text.split()
+        if len(words) < 4:
             await message.reply(
-                "⚔️ Формат: <code>/attack @username кількість</code>\n"
-                "Наприклад: <code>/attack @rival 200</code>"
+                "⚔️ Формат: <code>/attack @username назва_замку кількість</code>\n"
+                "Наприклад: <code>/attack @rival Кастерлі Рок 200</code>"
             )
             return
 
-        target_identifier = args[1]
+        target_identifier = words[1]
+        
         try:
-            army_amount = int(args[2])
+            army_amount = int(words[-1])
         except ValueError:
-            await message.reply("⚔️ Кількість воїнів має бути числом!")
+            await message.reply("⚔️ Кількість воїнів наприкінці команди має бути числом!")
             return
+
+        castle_name = " ".join(words[2:-1])
 
         # --- Get attacker ---
         attacker = await get_user(session, message.from_user.id)
@@ -86,7 +91,7 @@ async def attack_handler(message: Message, bot: Bot) -> None:
         # --- Find defender by @username or user_id ---
         target_username = target_identifier.lstrip("@")
         result = await session.execute(
-            select(User).where(User.username == target_username)
+            select(User).where(func.lower(User.username) == target_username.lower())
         )
         defender = result.scalar_one_or_none()
 
@@ -115,14 +120,57 @@ async def attack_handler(message: Message, bot: Bot) -> None:
             await message.reply(msg.ERR_ATTACK_ALLY)
             return
 
-        # --- Defender must have castles ---
-        defender_castles = await get_user_castles(session, defender.user_id)
-        if not defender_castles:
-            await message.reply(msg.ERR_ATTACK_NO_CASTLE)
+        # --- Find Castle ---
+        import re
+        
+        def normalize_name(n: str) -> str:
+            # Lowercase, replace non-breaking spaces and hyphens with normal spaces
+            n = n.lower().replace("\xa0", " ").replace("-", " ").replace("'", "").replace("’", "")
+            return re.sub(r'\s+', ' ', n).strip()
+
+        normalized_input = normalize_name(castle_name)
+        
+        result_castles = await session.execute(select(Castle))
+        all_castles = result_castles.scalars().all()
+        
+        target_castle = None
+        
+        # 1. Спробуємо точний збіг після нормалізації
+        for c in all_castles:
+            if normalize_name(c.name) == normalized_input:
+                target_castle = c
+                break
+                
+        # 2. Спробуємо частковий збіг (наприклад, "кастерлі" для "Кастерлі Рок")
+        if not target_castle:
+            for c in all_castles:
+                if normalized_input in normalize_name(c.name):
+                    target_castle = c
+                    break
+
+        if not target_castle:
+            await message.reply(
+                f"⚔️ Замок <b>{castle_name}</b> не знайдений у Вестеросі!"
+            )
             return
 
-        # Pick the first castle as target (simplification — later WebApp will allow picking)
-        target_castle = defender_castles[0]
+        # --- Check if Castle belongs to Defender ---
+        if target_castle.owner_id != defender.user_id:
+            if target_castle.owner_id is None:
+                owner_name = "Ніхто (замок вільний)"
+            else:
+                owner_result = await session.execute(
+                    select(User).where(User.user_id == target_castle.owner_id)
+                )
+                owner = owner_result.scalar_one_or_none()
+                owner_name = f"@{owner.username}" if (owner and owner.username) else (owner.first_name if owner else "Невідомий лорд")
+            
+            def_name = f"@{defender.username}" if defender.username else defender.first_name
+            await message.reply(
+                f"⚔️ Замок <b>{target_castle.name}</b> не належить лорду <b>{def_name}</b>!\n"
+                f"Власник замку: <b>{owner_name}</b>."
+            )
+            return
 
         # --- Deduct army from attacker (they're committed to the march) ---
         attacker.army_size -= army_amount

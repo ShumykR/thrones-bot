@@ -1,3 +1,11 @@
 .agents
 .env
 .venv
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Databases
+*.db
+*.db-journal

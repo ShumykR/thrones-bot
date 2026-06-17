@@ -203,3 +203,42 @@ async def my_status_handler(message: Message) -> None:
         )
 
         await message.answer(text)
+
+
+# ═══════════════════════════════════════
+# /castles — View all castles in Westeros
+# ═══════════════════════════════════════
+
+@router.message(Command("castles"))
+async def castles_handler(message: Message) -> None:
+    """Show the list of all castles and their details (owner, garrison, income)."""
+    async with AsyncSessionLocal() as session:
+        from sqlalchemy import select
+        from sqlalchemy.orm import joinedload
+        from bot.models.db import Castle
+
+        # Query all castles and eagerly load their owners
+        result = await session.execute(
+            select(Castle).options(joinedload(Castle.owner))
+        )
+        castles = result.scalars().all()
+
+        if not castles:
+            await message.answer("🏰 У Вестеросі поки немає відомих замків.")
+            return
+
+        lines = ["🏰 <b>Замки Вестеросу та їхній стан:</b>\n"]
+        for castle in castles:
+            if castle.owner:
+                owner_name = f"@{castle.owner.username}" if castle.owner.username else castle.owner.first_name
+                owner_str = f"володар: <b>{owner_name}</b>"
+            else:
+                owner_str = "<i>вільний замок</i>"
+
+            lines.append(
+                f"• <b>{castle.name}</b>\n"
+                f"  └ {owner_str} | гарнізон: <code>{castle.garrison}</code> | приріст: <code>+{castle.army_per_hour}</code> воїнів/год"
+            )
+
+        await message.answer("\n".join(lines))
+

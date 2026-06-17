@@ -23,9 +23,10 @@ WELCOME_ALREADY_REGISTERED = (
 HELP_TEXT = (
     "📜 <b>Книга Команд Вестеросу</b>\n\n"
     "⚔️ <b>Війна:</b>\n"
-    "<code>/attack @username кількість</code> — штурм замку\n\n"
+    "<code>/attack @username назва_замку кількість</code> — штурм конкретного замку\n\n"
     "👑 <b>Корона:</b>\n"
     "<code>/throne</code> — стан королівства\n"
+    "<code>/castles</code> — список замків Вестеросу та їхній стан\n"
     "<code>/my_status</code> — ваш профіль\n\n"
     "🗡️ <b>Змова (тільки в ПП):</b>\n"
     "<code>/conspiracy</code> — почати Велику Змову\n\n"
