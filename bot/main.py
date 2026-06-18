@@ -14,7 +14,7 @@ from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiohttp import web
 
-from config.config import BOT_TOKEN, LOG_LEVEL, WEBAPP_HOST, WEBAPP_PORT, validate_config
+from config.config import BOT_TOKEN, LOG_LEVEL, WEBAPP_HOST, WEBAPP_PORT, CHAT_ID, validate_config
 from bot.models.db import init_db
 from bot.handlers.common import router as common_router
 from bot.handlers.war import router as war_router
@@ -93,6 +93,16 @@ async def main() -> None:
     logger.info(f"🌐 WebApp API started at http://{WEBAPP_HOST}:{WEBAPP_PORT}")
 
     logger.info("👑 Bot is ready! Starting polling...")
+
+    # Check bot permissions in the chat
+    try:
+        bot_member = await bot.get_chat_member(chat_id=CHAT_ID, user_id=bot.id)
+        if bot_member.status != "administrator":
+            logger.warning(f"⚠️ Bot is NOT an administrator in chat {CHAT_ID}! Some features (like /mute) will fail.")
+        else:
+            logger.info("🛡️ Bot has administrator rights in the chat.")
+    except Exception as e:
+        logger.error(f"⚠️ Could not verify bot permissions in chat {CHAT_ID}. Is the bot added to the chat? Error: {e}")
 
     try:
         await dp.start_polling(bot)

@@ -24,7 +24,8 @@ from bot.models.db import (
 )
 from bot.services.scheduler import schedule_battle_resolution
 from bot.texts import messages as msg
-from config.config import CHAT_ID
+from config.config import CHAT_ID, MIN_ATTACK_ARMY, BATTLE_RESOLVE_MINUTES
+
 
 logger = logging.getLogger(__name__)
 
@@ -71,8 +72,8 @@ async def attack_handler(message: Message, bot: Bot) -> None:
             return
 
         # --- Minimum army check ---
-        if army_amount < 100:
-            await message.reply(msg.ERR_ATTACK_NOT_ENOUGH_ARMY)
+        if army_amount < MIN_ATTACK_ARMY:
+            await message.reply(f"⚔️ Для штурму потрібно хоча б {MIN_ATTACK_ARMY} воїнів!")
             return
 
         if army_amount > attacker.army_size:
@@ -221,7 +222,7 @@ async def attack_handler(message: Message, bot: Bot) -> None:
         await message.reply(
             f"⚔️ Ваша армія ({army_amount} воїнів) вирушила на штурм "
             f"замку <b>{target_castle.name}</b>!\n"
-            f"⏳ Результат буде через 5 хвилин."
+            f"⏳ Результат буде через {BATTLE_RESOLVE_MINUTES} хвилин."
         )
 
 

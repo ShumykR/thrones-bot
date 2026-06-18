@@ -36,11 +36,23 @@
             <!-- Map View -->
             <section id="view-map" class="view active">
                 <h1 class="view-title">Королівство Вестерос</h1>
-                <div class="king-banner" id="king-banner" style="display: none;">
-                    👑 Король: <strong id="king-name">...</strong>
+                <div class="throne-container" id="throne-container" style="display: none;">
+                    <img src="assets/throne.jpg" alt="Залізний Трон" class="throne-bg">
+                    <div class="throne-avatar-wrapper">
+                        <img id="king-avatar" src="" alt="King" class="king-avatar">
+                    </div>
+                    <div class="king-label">Король: <strong id="king-name">...</strong></div>
                 </div>
-                <div class="castles-grid" id="castles-grid">
-                    <!-- Castles rendered here -->
+
+                <div class="map-container" id="map-container">
+                    <img src="assets/westeros_map.jpg" alt="Карта Вестеросу" class="westeros-bg" id="westeros-img">
+                    <!-- Castle dots will be injected here via JS -->
+                    
+                    <!-- Map Legend -->
+                    <div class="map-legend" id="map-legend">
+                        <h4>Великі Доми (Лорди)</h4>
+                        <div id="legend-items"></div>
+                    </div>
                 </div>
             </section>
         </main>

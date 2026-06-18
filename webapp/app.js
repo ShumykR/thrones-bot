@@ -31,7 +31,8 @@ let state = {
     me: null,
     castles: [],
     king: null,
-    selectedCastle: null
+    selectedCastle: null,
+    config: { min_attack_army: 100 }
 };
 
 // Utilities
@@ -82,34 +83,110 @@ function renderHeader() {
     els.castlesCount.textContent = state.me.castles_count;
 }
 
+const castleCoords = {
+    "Стіна": { top: "5%", left: "50%" },
+    "Чорний Замок": { top: "7%", left: "50%" },
+    "Вінтерфелл": { top: "20%", left: "45%" },
+    "Залізні Острови": { top: "45%", left: "20%" },
+    "Близнята": { top: "45%", left: "40%" },
+    "Лорд-Перетин": { top: "46%", left: "42%" },
+    "Арренська Вежа": { top: "48%", left: "65%" },
+    "Харренгол": { top: "55%", left: "48%" },
+    "Кастерлі Рок": { top: "60%", left: "25%" },
+    "Висад": { top: "68%", left: "60%" },
+    "Червоний Замок": { top: "69%", left: "61%" },
+    "Драконячий Камінь": { top: "62%", left: "70%" },
+    "Хайгарден": { top: "75%", left: "30%" },
+    "Штормовий Кінець": { top: "78%", left: "65%" },
+    "Дорнійська Фортеця": { top: "90%", left: "70%" },
+    "Уотергарден": { top: "92%", left: "72%" }
+};
+
 function renderMap() {
     if (state.king) {
-        els.kingName.textContent = state.king.name;
-        els.kingBanner.style.display = 'block';
+        document.getElementById('king-name').textContent = state.king.name;
+        document.getElementById('throne-container').style.display = 'block';
+        
+        // Avatar logic
+        const kingAvatar = document.getElementById('king-avatar');
+        if (state.me && state.king.id === state.me.user_id && tg.initDataUnsafe?.user?.photo_url) {
+            // King is the current user
+            kingAvatar.src = tg.initDataUnsafe.user.photo_url;
+        } else {
+            // Fallback: generate initials avatar for the king
+            kingAvatar.src = `https://api.dicebear.com/7.x/initials/svg?seed=${state.king.name}&backgroundColor=1a1d24&textColor=fbbf24`;
+        }
     } else {
-        els.kingBanner.style.display = 'none';
+        document.getElementById('throne-container').style.display = 'none';
     }
 
-    els.castlesGrid.innerHTML = '';
+    // Keep the map image, remove old dots
+    const container = document.getElementById('map-container');
+    const existingDots = container.querySelectorAll('.castle-dot');
+    existingDots.forEach(dot => dot.remove());
+    
+    // To track unique owners for the legend
+    const ownersMap = new Map();
     
     state.castles.forEach(castle => {
-        const card = document.createElement('div');
-        card.className = 'castle-card';
-        card.style.setProperty('--owner-color', getColorForUser(castle.owner?.id));
+        const dot = document.createElement('div');
+        dot.className = 'castle-dot';
+        const color = getColorForUser(castle.owner?.id);
+        dot.style.setProperty('--owner-color', color);
         
-        let ownerName = 'Вільний замок';
         if (castle.owner) {
-            ownerName = state.me && castle.owner.id === state.me.user_id ? 'Ваш замок' : castle.owner.name;
+            ownersMap.set(castle.owner.id, { name: castle.owner.name, color: color });
         }
 
-        card.innerHTML = `
-            <span class="castle-icon">🏰</span>
-            <div class="castle-name">${castle.name}</div>
-            <div class="castle-owner" style="color: ${getColorForUser(castle.owner?.id)}">${ownerName}</div>
-        `;
+        // Use coordinates if available, else random fallback
+        const coords = castleCoords[castle.name];
+        if (coords) {
+            dot.style.top = coords.top;
+            dot.style.left = coords.left;
+        } else {
+            dot.style.top = Math.random() * 80 + 10 + '%';
+            dot.style.left = Math.random() * 80 + 10 + '%';
+        }
+
+        // Add label
+        const label = document.createElement('div');
+        label.className = 'castle-dot-label';
+        label.textContent = castle.name;
+        dot.appendChild(label);
         
-        card.addEventListener('click', () => openCastleModal(castle));
-        els.castlesGrid.appendChild(card);
+        dot.addEventListener('click', (e) => {
+            e.stopPropagation(); // prevent map click
+            openCastleModal(castle);
+        });
+        container.appendChild(dot);
+    });
+    
+    // Render Legend
+    const legendContainer = document.getElementById('legend-items');
+    legendContainer.innerHTML = '';
+    
+    if (ownersMap.size === 0) {
+        legendContainer.innerHTML = '<div style="color: #94a3b8; text-align: center;">Всі замки вільні</div>';
+    } else {
+        ownersMap.forEach((data, id) => {
+            const item = document.createElement('div');
+            item.className = 'legend-item';
+            const isMe = state.me && state.me.user_id === id;
+            item.innerHTML = `
+                <div class="legend-color" style="background-color: ${data.color}"></div>
+                <span>${data.name} ${isMe ? '(Ви)' : ''}</span>
+            `;
+            legendContainer.appendChild(item);
+        });
+    }
+
+    // Dev tool: click on map to get coordinates
+    const mapImg = document.getElementById('westeros-img');
+    mapImg.addEventListener('click', (e) => {
+        const rect = mapImg.getBoundingClientRect();
+        const x = ((e.clientX - rect.left) / rect.width * 100).toFixed(1);
+        const y = ((e.clientY - rect.top) / rect.height * 100).toFixed(1);
+        tg.showAlert(`Координати: top: "${y}%", left: "${x}%"`);
     });
 }
 
@@ -129,13 +206,14 @@ function openCastleModal(castle) {
     } else {
         const isOwnedByMe = castle.owner && castle.owner.id === state.me.user_id;
         
-        if (isOwnedByMe || state.me.army_size < 100 || !castle.owner) {
+        if (isOwnedByMe || state.me.army_size < state.config.min_attack_army || !castle.owner) {
             // Cannot attack own castle or unoccupied castle (per logic) or insufficient army
             els.mAttackSection.style.display = 'none';
         } else {
             els.mAttackSection.style.display = 'block';
+            els.mSlider.min = state.config.min_attack_army;
             els.mSlider.max = state.me.army_size;
-            els.mSlider.value = Math.min(100, state.me.army_size);
+            els.mSlider.value = Math.min(state.config.min_attack_army, state.me.army_size);
             els.mArmyVal.textContent = els.mSlider.value;
         }
     }
@@ -193,6 +271,9 @@ async function init() {
         if (stateRes && !stateRes.error) {
             state.castles = stateRes.castles;
             state.king = stateRes.king;
+            if (stateRes.config) {
+                state.config = stateRes.config;
+            }
         }
     } else {
         // Mock data for browser dev

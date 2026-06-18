@@ -15,7 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import joinedload
 
 from bot.models.db import AsyncSessionLocal, User, Castle, get_user
-from config.config import BOT_TOKEN
+from config.config import BOT_TOKEN, MIN_ATTACK_ARMY
 
 logger = logging.getLogger(__name__)
 
@@ -135,7 +135,10 @@ async def api_state(request: web.Request) -> web.Response:
             
         return web.json_response({
             "king": {"id": king.user_id, "name": king.first_name} if king else None,
-            "castles": castles_data
+            "castles": castles_data,
+            "config": {
+                "min_attack_army": MIN_ATTACK_ARMY
+            }
         })
 
 

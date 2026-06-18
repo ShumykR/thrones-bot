@@ -44,6 +44,7 @@ CASTLE_ARMY_CAP: int = 500         # extra cap per castle
 STARTING_ARMY: int = 100           # army size on registration
 
 # Battle
+MIN_ATTACK_ARMY: int = 100         # Minimum troops required to attack
 BATTLE_RAND_MIN: float = 0.8       # battle randomness floor
 BATTLE_RAND_MAX: float = 1.2       # battle randomness ceiling
 BATTLE_RESOLVE_MINUTES: int = 5    # minutes until battle resolves
