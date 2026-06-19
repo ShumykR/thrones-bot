@@ -358,6 +358,7 @@ body {
 
 input[type=range] {
     width: 100%;
+    appearance: none;
     -webkit-appearance: none;
     background: transparent;
 }

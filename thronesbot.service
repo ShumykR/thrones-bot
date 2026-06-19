@@ -1,0 +1,13 @@
+[Unit]
+Description=ThronesBot Service
+After=network.target
+
+[Service]
+User=ubuntu
+WorkingDirectory=/opt/thronesbot
+Environment="PATH=/opt/thronesbot/.venv/bin" "PYTHONPATH=/opt/thronesbot"
+ExecStart=/opt/thronesbot/.venv/bin/python -m bot.main
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
