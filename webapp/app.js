@@ -248,10 +248,20 @@ els.mBtnAttack.addEventListener('click', () => {
         
         if (tg.HapticFeedback) tg.HapticFeedback.impactOccurred('medium');
         
-        // As a WebApp inside Telegram, we can prompt the user to send the command
-        const command = `/attack @${castle.owner?.username || 'user'} ${castle.name} ${amount}`;
-        tg.showAlert(`Штурм можна розпочати командою у чаті:\n\n${command}`);
-        closeModal();
+        apiFetch('/api/attack', 'POST', {
+            castle_id: castle.id,
+            amount: amount
+        }).then(res => {
+            if (res && res.success) {
+                tg.showAlert("Війська вирушили на штурм!");
+                // Optimistically deduct army
+                state.me.army_size -= amount;
+                renderHeader();
+            } else if (res && res.error) {
+                tg.showAlert(`Помилка: ${res.error}`);
+            }
+            closeModal();
+        });
     });
 });
 
