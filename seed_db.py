@@ -62,10 +62,10 @@ async def main():
         
         # Mapping of username -> list of castle names to assign
         assignments = {
-            "jon_snow": ["Вінтерфелл", "Чорний Замок"],
-            "jaime_lannister": ["Кастерлі Рок", "Харренгол"],
-            "daenerys_targaryen": ["Драконячий Камінь", "Червоний Замок"],
-            "stannis_baratheon": ["Штормовий Кінець"],
+            "jon_snow": ["Північ"],
+            "jaime_lannister": ["Західні Землі", "Королівські Землі"],
+            "daenerys_targaryen": ["Драконячий Камінь"],
+            "stannis_baratheon": ["Штормові Землі"],
         }
         
         for username, castle_names in assignments.items():

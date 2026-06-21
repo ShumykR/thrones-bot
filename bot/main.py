@@ -74,18 +74,13 @@ async def main() -> None:
 
     # Register routers
     dp.include_router(common_router)
-    dp.include_router(war_router)
-    dp.include_router(conspiracy_router)
-    dp.include_router(puppet_router)
-    dp.include_router(alliance_router)
-    dp.include_router(king_router)
 
     # Start APScheduler (economy tick, daily tick)
     setup_scheduler(bot)
     logger.info("⏰ Scheduler started")
 
     # Start WebApp API Server
-    app = setup_api()
+    app = setup_api(bot)
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, WEBAPP_HOST, WEBAPP_PORT)
