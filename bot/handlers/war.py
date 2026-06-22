@@ -107,11 +107,6 @@ async def attack_handler(message: Message, bot: Bot) -> None:
             await message.reply(msg.ERR_ATTACK_SELF)
             return
 
-        # --- Puppet cannot attack master ---
-        if attacker.role == "puppet" and attacker.master_id == defender.user_id:
-            await message.reply(msg.ERR_ATTACK_MASTER)
-            return
-
         # --- Alliance check ---
         if (
             attacker.alliance_id

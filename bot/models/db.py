@@ -52,30 +52,22 @@ class User(Base):
     user_id: int = Column(BigInteger, primary_key=True)           # Telegram User ID
     username: Optional[str] = Column(String, nullable=True)        # @nickname
     first_name: str = Column(String, nullable=False, default="Лорд")
-    role: str = Column(String, nullable=False, default="lord")     # 'lord' | 'king' | 'puppet'
+    role: str = Column(String, nullable=False, default="lord")     # 'lord' | 'king'
     army_size: int = Column(Integer, nullable=False, default=100)
-    master_id: Optional[int] = Column(
-        BigInteger, ForeignKey("users.user_id"), nullable=True
-    )
-    independence_points: int = Column(Integer, nullable=False, default=0)
     alliance_id: Optional[int] = Column(
         Integer, ForeignKey("alliances.alliance_id"), nullable=True
     )
     activity_count: int = Column(Integer, nullable=False, default=0)
     muted_until: Optional[datetime] = Column(DateTime, nullable=True)
-    last_sabotage: Optional[datetime] = Column(DateTime, nullable=True)
     created_at: datetime = Column(DateTime, nullable=False, default=datetime.utcnow)
     last_active: datetime = Column(DateTime, nullable=False, default=datetime.utcnow)
+    king_opinion: str = Column(String, nullable=False, default="neutral")  # 'good' | 'bad' | 'neutral'
+    authority: int = Column(Integer, nullable=False, default=50)           # King's authority points
+    king_tribute_rate: float = Column(Float, nullable=False, default=0.0)  # Percentage taken by King (0.0 to 0.5)
 
     # Relationships
     castles = relationship(
         "Castle", back_populates="owner", foreign_keys="Castle.owner_id"
-    )
-    puppets = relationship(
-        "User",
-        foreign_keys=[master_id],
-        backref="master_rel",
-        remote_side=[user_id],
     )
     alliance = relationship(
         "Alliance", back_populates="members", foreign_keys=[alliance_id]
@@ -173,23 +165,17 @@ class Conspiracy(Base):
         return f"<Conspiracy {self.conspiracy_id} status={self.status}>"
 
 
-# ═══════════════════════════════════════
-# 🏰 Castle Seed Data
-# ═══════════════════════════════════════
+class ScoutReport(Base):
+    __tablename__ = "scout_reports"
 
-CASTLE_NAMES: list[str] = [
-    "Північ",
-    "Залізні Острови",
-    "Річкові Землі",
-    "Долина Аррен",
-    "Західні Землі",
-    "Королівські Землі",
-    "Простір",
-    "Штормові Землі",
-    "Дорн",
-    "Драконячий Камінь"
-]
+    report_id: int = Column(Integer, primary_key=True, autoincrement=True)
+    user_id: int = Column(BigInteger, ForeignKey("users.user_id"), nullable=False)
+    castle_id: int = Column(Integer, ForeignKey("castles.castle_id"), nullable=False)
+    garrison: int = Column(Integer, nullable=False)
+    timestamp: datetime = Column(DateTime, nullable=False, default=datetime.utcnow)
 
+    def __repr__(self) -> str:
+        return f"<ScoutReport user={self.user_id} castle={self.castle_id} garrison={self.garrison}>"
 
 # ═══════════════════════════════════════
 # 🔧 Database Initialization
@@ -199,18 +185,6 @@ async def init_db() -> None:
     """Create all tables and seed castles if the castles table is empty."""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-
-    # Seed castles
-    async with AsyncSessionLocal() as session:
-        result = await session.execute(
-            select(func.count(Castle.castle_id))
-        )
-        count = result.scalar()
-        if count == 0:
-            for name in CASTLE_NAMES:
-                session.add(Castle(name=name))
-            await session.commit()
-
 
 # ═══════════════════════════════════════
 # 🔍 Common Query Helpers

@@ -9,9 +9,36 @@ from bot.models.db import init_db, AsyncSessionLocal, User, Castle
 from sqlalchemy import select
 
 async def main():
-    # 1. Initialize the database (creates tables & default castles if they don't exist)
+    # 1. Initialize the database (creates tables)
     print("Ініціалізація бази даних...")
     await init_db()
+    
+    async with AsyncSessionLocal() as session:
+        from sqlalchemy import delete
+        
+        # Очищуємо всі поточні землі, щоб перезаписати з конкретними ID
+        await session.execute(delete(Castle))
+        
+        # 1.5 Створення 10 земель з фіксованими ID (щоб ви могли відкоригувати їх для мапи)
+        # Формат: (ID, "Назва Землі")
+        lands_data = [
+            (1, "Землі за Стіною", 10),
+            (2, "Північ", 20),
+            (3, "Західні Землі", 25),
+            (4, "Залізні Острови", 10),
+            (5, "Долина Аррен", 20),
+            (6, "Королівські Землі", 30),
+            (7, "Дорн", 15),
+            (8, "Простір", 25),
+            (9, "Штормові Землі", 20),
+            (10, "Річкові Землі", 15)
+        ]
+
+        for c_id, name, aph in lands_data:
+            session.add(Castle(castle_id=c_id, name=name, army_per_hour=aph))
+        
+        await session.commit()
+        print("Землі успішно створено з вказаними ID.")
     
     async with AsyncSessionLocal() as session:
         # Check if users already exist
@@ -20,10 +47,10 @@ async def main():
         
         # Mock users data with Game of Thrones characters
         mock_users_data = [
-            {"user_id": 111111111, "username": "jon_snow", "first_name": "Джон Сноу", "role": "king", "army_size": 1200},
-            {"user_id": 222222222, "username": "jaime_lannister", "first_name": "Джейме Ланністер", "role": "lord", "army_size": 800},
-            {"user_id": 333333333, "username": "daenerys_targaryen", "first_name": "Данерис Таргарієн", "role": "lord", "army_size": 1500},
-            {"user_id": 444444444, "username": "stannis_baratheon", "first_name": "Станніс Баратеон", "role": "lord", "army_size": 600},
+            {"user_id": 111111111, "username": "jon_snow", "first_name": "Джон Сноу", "role": "king", "army_size": 1200, "authority": 50, "king_tribute_rate": 0.0},
+            {"user_id": 222222222, "username": "jaime_lannister", "first_name": "Джейме Ланністер", "role": "lord", "army_size": 800, "authority": 0, "king_tribute_rate": 0.0},
+            {"user_id": 333333333, "username": "daenerys_targaryen", "first_name": "Данерис Таргарієн", "role": "lord", "army_size": 1500, "authority": 0, "king_tribute_rate": 0.0},
+            {"user_id": 444444444, "username": "stannis_baratheon", "first_name": "Станніс Баратеон", "role": "lord", "army_size": 600, "authority": 0, "king_tribute_rate": 0.1},
         ]
         
         users_dict = {}
@@ -38,7 +65,9 @@ async def main():
                     username=data["username"],
                     first_name=data["first_name"],
                     role=data["role"],
-                    army_size=data["army_size"]
+                    army_size=data["army_size"],
+                    authority=data["authority"],
+                    king_tribute_rate=data["king_tribute_rate"]
                 )
                 session.add(user)
                 print(f"Створено користувача: {user.first_name} (@{user.username})")
@@ -47,6 +76,8 @@ async def main():
                 user.army_size = data["army_size"]
                 user.first_name = data["first_name"]
                 user.username = data["username"]
+                user.authority = data["authority"]
+                user.king_tribute_rate = data["king_tribute_rate"]
                 print(f"Користувач {user.first_name} вже існує. Оновлено.")
             users_dict[data["username"]] = user
 
@@ -63,7 +94,7 @@ async def main():
         # Mapping of username -> list of castle names to assign
         assignments = {
             "jon_snow": ["Північ"],
-            "jaime_lannister": ["Західні Землі", "Королівські Землі"],
+            "jaime_lannister": ["Західні Землі", "Простір"],
             "daenerys_targaryen": ["Драконячий Камінь"],
             "stannis_baratheon": ["Штормові Землі"],
         }

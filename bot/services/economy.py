@@ -1,6 +1,6 @@
 """
 ThroneChat — Economy Service
-Hourly income tick, puppet taxes, daily independence points, random events.
+Hourly income tick, random events.
 """
 
 import logging
@@ -27,9 +27,6 @@ from config.config import (
     BASE_INCOME,
     CASTLE_INCOME,
     CHAT_ID,
-    GARRISON_FREEZES_IP,
-    PUPPET_DAILY_IP,
-    PUPPET_TAX_RATE,
 )
 
 logger = logging.getLogger(__name__)
@@ -44,12 +41,18 @@ async def economy_tick(bot: Bot) -> None:
     Called every hour by APScheduler.
     - Each user with castles: +castle.army_per_hour per castle
     - Users with 0 castles: +BASE_INCOME (2 troops/hr)
-    - Puppets: 30% tax goes to master
     - Army capped at BASE_CAP + (castle_count × CASTLE_CAP)
     """
     async with AsyncSessionLocal() as session:
         result = await session.execute(select(User))
         users = result.scalars().all()
+        
+        # Find the king to give taxes to
+        king = None
+        for user in users:
+            if user.role == "king":
+                king = user
+                break
 
         for user in users:
             castles = await get_user_castles(session, user.user_id)
@@ -59,16 +62,12 @@ async def economy_tick(bot: Bot) -> None:
             else:
                 income = sum(c.army_per_hour for c in castles)
 
-            # Puppet tax: 30% goes to master
-            if user.role == "puppet" and user.master_id:
-                tax = int(income * PUPPET_TAX_RATE)
-                income -= tax
-
-                master = await get_user(session, user.master_id)
-                if master:
-                    master_cap = await get_army_cap(session, master.user_id)
-                    master.army_size = min(master.army_size + tax, master_cap)
-
+            # King's Tribute: based on dynamic king_tribute_rate
+            if user.role != "king" and king and user.king_tribute_rate > 0:
+                king_tax = int(income * user.king_tribute_rate)
+                income -= king_tax
+                king_cap = await get_army_cap(session, king.user_id)
+                king.army_size = min(king.army_size + king_tax, king_cap)
             # Apply income with army cap
             army_cap = await get_army_cap(session, user.user_id)
             user.army_size = min(user.army_size + income, army_cap)
@@ -84,64 +83,29 @@ async def economy_tick(bot: Bot) -> None:
 async def daily_tick(bot: Bot) -> None:
     """
     Called every 24 hours by APScheduler.
-    - +PUPPET_DAILY_IP independence points to each puppet (if no garrison freezes it)
     - Trigger a random daily event
     """
     async with AsyncSessionLocal() as session:
-        # Independence points for puppets
         result = await session.execute(
-            select(User).where(User.role == "puppet")
+            select(User)
         )
-        puppets = result.scalars().all()
-
-        for puppet in puppets:
-            # Check if garrison freezes IP
-            if GARRISON_FREEZES_IP:
-                has_garrison = await _check_garrison(session, puppet.user_id)
-                if has_garrison:
-                    continue
-
-            old_ip = puppet.independence_points
-            puppet.independence_points = min(100, puppet.independence_points + PUPPET_DAILY_IP)
-
-            puppet_name = f"@{puppet.username}" if puppet.username else puppet.first_name
-
-            # Notify at milestones
-            if old_ip < 50 <= puppet.independence_points:
-                try:
-                    await bot.send_message(
-                        CHAT_ID,
-                        f"⛓️ <b>{puppet_name}</b> вже наполовину вільний! "
-                        f"Власнику варто задуматись...",
-                    )
-                except Exception:
-                    logger.exception("Failed to send puppet milestone message")
-
-            elif old_ip < 100 <= puppet.independence_points:
-                try:
-                    await bot.send_message(
-                        CHAT_ID,
-                        f"🔥 <b>{puppet_name}</b> готовий до повстання! "
-                        f"Команда /rebel доступна!",
-                    )
-                except Exception:
-                    logger.exception("Failed to send puppet rebellion ready message")
+        users = result.scalars().all()
+        
+        # Calculate King's authority based on opinions
+        king = next((u for u in users if u.role == "king"), None)
+        if king:
+            loyalists = sum(1 for u in users if u.king_opinion == "good" and u.role != "king")
+            rebels = sum(1 for u in users if u.king_opinion == "bad" and u.role != "king")
+            
+            auth_change = 10 + (loyalists * 5) - (rebels * 5)
+            
+            king.authority = max(0, min(100, king.authority + auth_change))
 
         await session.commit()
-        logger.info("Daily tick: processed %d puppets", len(puppets))
 
     # Trigger random event
     await trigger_daily_event(bot)
 
-
-async def _check_garrison(session: AsyncSession, puppet_user_id: int) -> bool:
-    """Check if any castle belonging to puppet's master has a garrison > 0."""
-    puppet = await get_user(session, puppet_user_id)
-    if not puppet or not puppet.master_id:
-        return False
-
-    master_castles = await get_user_castles(session, puppet.master_id)
-    return any(c.garrison > 0 for c in master_castles)
 
 
 # ═══════════════════════════════════════

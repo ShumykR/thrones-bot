@@ -37,7 +37,10 @@ LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
 # ═══════════════════════════════════════════════
 
 # Economy
-BASE_INCOME: int = 2               # troops/hr with no castles
+ECONOMY_INTERVAL_MINUTES: int = 3 # minutes between economy ticks
+DAILY_INTERVAL_MINUTES: int = 5 # minutes between daily ticks
+POLL_INTERVAL_MINUTES: int = 5  # minutes between poll ticks
+BASE_INCOME: int = 5               # troops/hr with no castles
 CASTLE_INCOME: int = 10            # troops/hr per owned castle
 BASE_ARMY_CAP: int = 500           # minimum army cap
 CASTLE_ARMY_CAP: int = 500         # extra cap per castle
@@ -45,23 +48,13 @@ STARTING_ARMY: int = 100           # army size on registration
 
 # Battle
 MIN_ATTACK_ARMY: int = 100         # Minimum troops required to attack
-BATTLE_RAND_MIN: float = 0.8       # battle randomness floor
-BATTLE_RAND_MAX: float = 1.2       # battle randomness ceiling
-BATTLE_RESOLVE_MINUTES: int = 5    # minutes until battle resolves
-
-# Puppet system
-PUPPET_TAX_RATE: float = 0.30      # 30% hourly income tax to master
-PUPPET_DAILY_IP: int = 10          # independence points per day
-PUPPET_MSG_IP: int = 1             # IP per 50 messages
-PUPPET_MSG_THRESHOLD: int = 50     # messages needed for +1 IP
-SABOTAGE_IP_GAIN: int = 15         # IP from /sabotage
-MERCY_IP_REDUCTION: int = 20       # IP reduction from /mercy
-REBEL_THRESHOLD: int = 100         # IP needed to attempt /rebel
-GARRISON_FREEZES_IP: bool = True   # garrison prevents daily IP gain
+BATTLE_TICK_DMG_MIN: float = 0.08  # Min % damage dealt per tick (8%)
+BATTLE_TICK_DMG_MAX: float = 0.15  # Max % damage dealt per tick (15%)
+BATTLE_RESOLVE_MINUTES: int = 5    # minutes until battle resolves (also ticks)
 
 # Conspiracy
-CONSPIRACY_DURATION_H: int = 4     # hours for rebellion to form
-CONSPIRACY_LOSER_PENALTY: float = 0.50  # rebels lose 50% army if king survives
+CONSPIRACY_DURATION_MINUTES: int = 20 # minutes for rebellion to form
+CONSPIRACY_REBEL_DEFAULT_PCT: float = 0.50 # default army % committed by rebels
 
 # King powers
 MUTE_DURATION_MINUTES: int = 10    # default dungeon time

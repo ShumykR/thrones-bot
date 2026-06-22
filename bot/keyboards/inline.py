@@ -93,3 +93,28 @@ def alliance_invite_keyboard(alliance_id: int) -> InlineKeyboardMarkup:
             ),
         ],
     ])
+
+class OrderCallback(CallbackData, prefix="order"):
+    action: str           # 'accept' | 'decline'
+    target_id: int
+    order_type: str       # 'troops' | 'castle'
+    value: str            # amount or castle name
+
+def order_keyboard(target_id: int, order_type: str, value: str) -> InlineKeyboardMarkup:
+    """Build the accept/decline keyboard for royal orders."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="✅ Підкоритися",
+                callback_data=OrderCallback(
+                    action="accept", target_id=target_id, order_type=order_type, value=value
+                ).pack(),
+            ),
+            InlineKeyboardButton(
+                text="❌ Відмовитись (Кара)",
+                callback_data=OrderCallback(
+                    action="decline", target_id=target_id, order_type=order_type, value=value
+                ).pack(),
+            ),
+        ],
+    ])

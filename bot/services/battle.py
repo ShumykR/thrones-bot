@@ -17,62 +17,100 @@ from bot.models.db import (
     AsyncSessionLocal,
     Battle,
     Castle,
-    User,
-    count_user_castles,
-    get_army_cap,
-    get_user,
-    get_user_castles,
+    User
 )
 from bot.texts import messages as msg
-from config.config import (
-    BATTLE_RAND_MAX,
-    BATTLE_RAND_MIN,
-    CHAT_ID,
-)
+from config.config import CHAT_ID
 
 logger = logging.getLogger(__name__)
 
 
-def calculate_battle(attacker_army: int, defender_army: int) -> dict:
+def simulate_combat(atk_army: int, def_army: int, ticks: int = 5) -> dict:
     """
-    Calculate battle outcome with randomized power coefficients.
-
-    Random coefficient: 0.8 – 1.2 applied to both sides.
-    Winner/loser loss ranges differ to reward the victor.
-
-    Returns dict with: winner, atk_power, def_power, atk_losses, def_losses.
+    Iteratively simulate combat over a number of ticks.
+    Returns history of states and final result.
     """
-    atk_power = attacker_army * random.uniform(BATTLE_RAND_MIN, BATTLE_RAND_MAX)
-    def_power = defender_army * random.uniform(BATTLE_RAND_MIN, BATTLE_RAND_MAX)
-
-    if atk_power > def_power:
-        winner = "attacker"
-        atk_losses = int(attacker_army * random.uniform(0.20, 0.35))
-        def_losses = int(defender_army * random.uniform(0.50, 0.70))
-    else:
-        winner = "defender"
-        atk_losses = int(attacker_army * random.uniform(0.45, 0.60))
-        def_losses = int(defender_army * random.uniform(0.20, 0.35))
-
+    history = []
+    current_atk = atk_army
+    current_def = def_army
+    
+    for _ in range(ticks):
+        if current_atk <= 0 or current_def <= 0:
+            break
+            
+        # Using configured damage percentages
+        from config.config import BATTLE_TICK_DMG_MIN, BATTLE_TICK_DMG_MAX
+        atk_dmg = current_atk * random.uniform(BATTLE_TICK_DMG_MIN, BATTLE_TICK_DMG_MAX)
+        def_dmg = current_def * random.uniform(BATTLE_TICK_DMG_MIN, BATTLE_TICK_DMG_MAX)
+        
+        current_atk = max(0, int(current_atk - def_dmg))
+        current_def = max(0, int(current_def - atk_dmg))
+        
+        history.append({
+            "atk_alive": current_atk,
+            "def_alive": current_def,
+            "atk_losses": atk_army - current_atk,
+            "def_losses": def_army - current_def
+        })
+        
+    winner = "attacker" if current_atk > current_def else "defender"
+    
     return {
+        "history": history,
         "winner": winner,
-        "atk_power": round(atk_power),
-        "def_power": round(def_power),
-        "atk_losses": atk_losses,
-        "def_losses": def_losses,
+        "atk_alive": current_atk,
+        "def_alive": current_def,
+        "atk_losses": atk_army - current_atk,
+        "def_losses": def_army - current_def
     }
 
 
-async def resolve_battle(battle_id: int, bot: Bot) -> None:
+async def run_live_battle_updates(battle_id: int, bot: Bot, chat_id: int, msg_id: int, atk_army: int, def_army: int, atk_name: str, def_name: str, castle_name: str, simulation: dict) -> None:
+    import asyncio
+    
+    def make_progress_bar(percent: int, length: int = 15) -> str:
+        filled = int((percent / 100) * length)
+        return "█" * filled + "░" * (length - filled)
+        
+    history = simulation["history"]
+    for i, state in enumerate(history, 1):
+        await asyncio.sleep(60)
+        
+        total_alive = state["atk_alive"] + state["def_alive"]
+        atk_chance = int((state["atk_alive"] / total_alive) * 100) if total_alive > 0 else 50
+        progress = make_progress_bar(atk_chance)
+        
+        text = (
+            f"⚔️ <b>ШТУРМ ЗАМКУ {castle_name.upper()} ТРИВАЄ! (Хвилина {i}/5)</b>\n\n"
+            f"🗡️ <b>Атакуючі ({atk_name}):</b>\n"
+            f"В строю: {state['atk_alive']} воїнів\n"
+            f"Втрати: {state['atk_losses']} воїнів\n\n"
+            f"🛡️ <b>Захисники ({def_name}):</b>\n"
+            f"В строю: {state['def_alive']} воїнів\n"
+            f"Втрати: {state['def_losses']} воїнів\n\n"
+            f"📊 <b>Перевага:</b>\n"
+            f"Атака <code>[{progress}]</code> Захист\n"
+            f"({atk_chance}% / {100 - atk_chance}%)\n\n"
+            f"<i>Очікуйте завершення бою...</i>"
+        )
+        try:
+            await bot.edit_message_text(chat_id=chat_id, message_id=msg_id, text=text, parse_mode="HTML")
+        except Exception:
+            pass
+
+    # Proceed to final resolution
+    await resolve_battle(battle_id, bot, simulation)
+
+
+async def resolve_battle(battle_id: int, bot: Bot, precalculated_sim: dict = None) -> None:
     """
-    Resolve a pending battle: calculate result, apply losses,
-    transfer castle if attacker won, check puppet trigger.
-    Called by APScheduler 5 minutes after battle start.
+    Resolve a pending battle: apply precalculated losses,
+    transfer castle if attacker won.
+    Called by run_live_battle_updates after 5 mins, or by APScheduler fallback.
     """
     async with AsyncSessionLocal() as session:
         battle = await session.get(Battle, battle_id)
         if not battle or battle.status != "pending":
-            logger.warning("Battle %s not found or already resolved", battle_id)
             return
 
         attacker = await session.get(User, battle.attacker_id)
@@ -80,30 +118,28 @@ async def resolve_battle(battle_id: int, bot: Bot) -> None:
         castle = await session.get(Castle, battle.castle_id)
 
         if not all([attacker, defender, castle]):
-            logger.error("Battle %s: missing attacker/defender/castle", battle_id)
             battle.status = "done"
             await session.commit()
             return
 
-        # Calculate battle outcome
-        result = calculate_battle(battle.attacker_army, defender.army_size)
+        if precalculated_sim:
+            result = precalculated_sim
+        else:
+            result = simulate_combat(battle.attacker_army, castle.garrison or 0)
 
-        # Apply losses (never reduce to 0 — minimum is 1)
+        # Apply losses
         attacker.army_size = max(1, attacker.army_size - result["atk_losses"])
-        defender.army_size = max(1, defender.army_size - result["def_losses"])
+        castle.garrison = max(0, (castle.garrison or 0) - result["def_losses"])
 
-        # Record battle result
         battle.status = "done"
         battle.resolved_at = datetime.utcnow()
         battle.attacker_losses = result["atk_losses"]
         battle.defender_losses = result["def_losses"]
 
-        # Format names for messages
         atk_name = f"@{attacker.username}" if attacker.username else attacker.first_name
         def_name = f"@{defender.username}" if defender.username else defender.first_name
 
         if result["winner"] == "attacker":
-            # Attacker wins — transfer castle
             battle.winner_id = attacker.user_id
             castle.owner_id = attacker.user_id
 
@@ -111,43 +147,26 @@ async def resolve_battle(battle_id: int, bot: Bot) -> None:
                 attacker_name=atk_name,
                 defender_name=def_name,
                 castle_name=castle.name,
-                atk_power=result["atk_power"],
-                def_power=result["def_power"],
+                atk_power=result["atk_alive"],
+                def_power=result["def_alive"],
                 atk_losses=result["atk_losses"],
                 def_losses=result["def_losses"],
             )
-
-            # Check if defender lost their last castle → puppet trigger
-            defender_castle_count = await count_user_castles(session, defender.user_id)
-            if defender_castle_count == 0 and defender.role != "puppet":
-                defender.role = "puppet"
-                defender.master_id = attacker.user_id
-                defender.independence_points = 0
-                text += msg.BATTLE_PUPPET_TRIGGERED.format(
-                    loser_name=def_name,
-                    winner_name=atk_name,
-                )
-                logger.info(
-                    "Puppet trigger: %s is now puppet of %s",
-                    defender.user_id, attacker.user_id,
-                )
         else:
-            # Defender wins — castle stays
             battle.winner_id = defender.user_id
 
             text = msg.BATTLE_RESULT_DEFENDER_WON.format(
                 attacker_name=atk_name,
                 defender_name=def_name,
                 castle_name=castle.name,
-                atk_power=result["atk_power"],
-                def_power=result["def_power"],
+                atk_power=result["atk_alive"],
+                def_power=result["def_alive"],
                 atk_losses=result["atk_losses"],
                 def_losses=result["def_losses"],
             )
 
         await session.commit()
 
-        # Edit the live battle message with result
         try:
             if battle.message_id:
                 await bot.edit_message_text(
@@ -158,15 +177,7 @@ async def resolve_battle(battle_id: int, bot: Bot) -> None:
             else:
                 await bot.send_message(chat_id=CHAT_ID, text=text)
         except Exception:
-            logger.exception("Failed to edit/send battle result message")
-            # Fallback: try sending a new message
             try:
                 await bot.send_message(chat_id=CHAT_ID, text=text)
             except Exception:
-                logger.exception("Failed to send fallback battle result message")
-
-        logger.info(
-            "Battle %s resolved: %s won (atk=%s def=%s)",
-            battle_id, result["winner"],
-            result["atk_power"], result["def_power"],
-        )
+                pass

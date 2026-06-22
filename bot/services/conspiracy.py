@@ -26,13 +26,7 @@ from bot.models.db import (
 )
 from bot.keyboards.inline import conspiracy_keyboard
 from bot.texts import messages as msg
-from config.config import (
-    BATTLE_RAND_MAX,
-    BATTLE_RAND_MIN,
-    CHAT_ID,
-    CONSPIRACY_DURATION_H,
-    CONSPIRACY_LOSER_PENALTY,
-)
+from config.config import CONSPIRACY_DURATION_MINUTES
 
 logger = logging.getLogger(__name__)
 
@@ -46,17 +40,10 @@ async def start_conspiracy(
     chat_id: int,
     initiator_id: int,
     bot: Bot,
+    army_commit: int = 0
 ) -> Optional[Conspiracy]:
     """
     Start a new conspiracy against the current King.
-
-    Validates:
-    - No active conspiracy already running
-    - Initiator is not the King
-    - Initiator is not a puppet
-
-    Creates the Conspiracy record, posts a live message to the group chat
-    with voting keyboard, and schedules automatic resolution.
     """
     # --- Validation ---
     existing = await get_active_conspiracy(session, chat_id)
@@ -76,20 +63,18 @@ async def start_conspiracy(
         logger.info("Conspiracy rejected: initiator %d is the King", initiator_id)
         return None
 
-    if initiator.role == "puppet":
-        logger.info("Conspiracy rejected: initiator %d is a puppet", initiator_id)
-        return None
-
     king = await get_king(session)
     if not king:
         logger.info("Conspiracy rejected: no king on the throne")
         return None
 
     # --- Create Conspiracy ---
-    expires_at = datetime.utcnow() + timedelta(hours=CONSPIRACY_DURATION_H)
+    expires_at = datetime.utcnow() + timedelta(minutes=CONSPIRACY_DURATION_MINUTES)
 
-    # Initiator automatically joins as rebel, committing half their army
-    army_commit = max(1, initiator.army_size // 2)
+    # Initiator automatically joins as rebel
+    army_commit = max(1, min(army_commit, initiator.army_size))
+    initiator.army_size -= army_commit
+    
     rebels = {str(initiator_id): army_commit}
 
     conspiracy = Conspiracy(
@@ -103,25 +88,29 @@ async def start_conspiracy(
     session.add(conspiracy)
     await session.flush()  # Get conspiracy_id
 
-    # --- Post live message to group chat ---
+    # --- Post message to all users in PM ---
     king_name = f"@{king.username}" if king.username else king.first_name
     text = build_conspiracy_text(conspiracy, king_name)
 
-    try:
-        sent_msg = await bot.send_message(
-            chat_id=chat_id,
-            text=text,
-            reply_markup=conspiracy_keyboard(conspiracy.conspiracy_id),
-        )
-        conspiracy.message_id = sent_msg.message_id
-    except Exception:
-        logger.exception("Failed to send conspiracy announcement")
+    users = (await session.execute(select(User))).scalars().all()
+    for u in users:
+        if u.user_id == initiator_id:
+            continue
+        try:
+            await bot.send_message(
+                chat_id=u.user_id,
+                text=text,
+                reply_markup=conspiracy_keyboard(conspiracy.conspiracy_id),
+            )
+        except Exception:
+            pass
 
     await session.commit()
 
     # --- Schedule resolution ---
-    from bot.services.scheduler import schedule_conspiracy_resolution
+    from bot.services.scheduler import schedule_conspiracy_resolution, schedule_king_conspiracy_notification
     schedule_conspiracy_resolution(conspiracy.conspiracy_id, expires_at, bot)
+    schedule_king_conspiracy_notification(conspiracy.conspiracy_id, bot)
 
     logger.info(
         "Conspiracy %d started by user %d, expires at %s",
@@ -129,6 +118,24 @@ async def start_conspiracy(
     )
 
     return conspiracy
+
+
+async def notify_king_conspiracy(conspiracy_id: int, bot: Bot) -> None:
+    """Notify the king about the active conspiracy in a delayed PM."""
+    async with AsyncSessionLocal() as session:
+        conspiracy = await session.get(Conspiracy, conspiracy_id)
+        if not conspiracy or conspiracy.status != "active":
+            return
+            
+        king = await get_king(session)
+        if king:
+            try:
+                await bot.send_message(
+                    chat_id=king.user_id,
+                    text="👑 <b>ТРИВОГА, ВАША МИЛОСТЕ!</b>\n\nНаші шпигуни доносять про змову проти вас! Збирайте лоялістів, інакше ви втратите Трон!"
+                )
+            except Exception as e:
+                logger.error(f"Failed to notify king about conspiracy: {e}")
 
 
 # ═══════════════════════════════════════
@@ -144,14 +151,8 @@ async def join_conspiracy(
     bot: Bot,
 ) -> str:
     """
-    Join a conspiracy on a given side: 'rebel', 'loyalist', or 'neutral'.
-
-    - Removes the user from the other side if switching.
-    - Adds to chosen side with committed army amount.
-    - 'neutral' removes from both sides.
-    - Updates the live message with new counts.
-
-    Returns a status string for the callback answer.
+    Join a conspiracy on a given side.
+    Subtracts 50% of user's army upon joining. Refunds if changing side.
     """
     conspiracy = await session.get(Conspiracy, conspiracy_id)
     if not conspiracy or conspiracy.status != "active":
@@ -161,60 +162,46 @@ async def join_conspiracy(
     if not user:
         return "📜 Вас немає у Великій Книзі! Надішліть /start боту."
 
-    # King cannot vote
     if user.role == "king":
         return "👑 Король не може голосувати у змові проти самого себе!"
 
+    if user_id == conspiracy.initiator_id:
+        return "❌ Ініціатор не може змінити свій вибір."
+
     uid_str = str(user_id)
 
-    # Work with mutable copies of the JSON fields
     rebels = dict(conspiracy.rebels or {})
     loyalists = dict(conspiracy.loyalists or {})
 
-    # Clamp army commitment
-    army_to_commit = max(1, min(army_to_commit, user.army_size))
+    # Refund previous commit
+    old_commit = 0
+    if uid_str in rebels:
+        old_commit = rebels.pop(uid_str)
+    elif uid_str in loyalists:
+        old_commit = loyalists.pop(uid_str)
+        
+    user.army_size += old_commit
 
     if side == "neutral":
-        # Remove from both sides
-        rebels.pop(uid_str, None)
-        loyalists.pop(uid_str, None)
         result_text = "🕊️ Ви обрали нейтралітет."
-    elif side == "rebel":
-        loyalists.pop(uid_str, None)
+    from config.config import CONSPIRACY_REBEL_DEFAULT_PCT
+    if side == "rebel":
+        army_to_commit = max(1, int(user.army_size * CONSPIRACY_REBEL_DEFAULT_PCT))
+        user.army_size -= army_to_commit
         rebels[uid_str] = army_to_commit
-        result_text = f"⚔️ Ви приєднались до повстанців! ({army_to_commit} воїнів)"
+        result_text = f"⚔️ Ви приєдналися до Змови! ({army_to_commit} воїнів)"
     elif side == "loyalist":
-        rebels.pop(uid_str, None)
+        army_to_commit = max(1, int(user.army_size * CONSPIRACY_REBEL_DEFAULT_PCT))
+        user.army_size -= army_to_commit
         loyalists[uid_str] = army_to_commit
         result_text = f"👑 Ви підтримали Корону! ({army_to_commit} воїнів)"
     else:
+        user.army_size -= old_commit
         return "❌ Невідома сторона."
 
-    # Update conspiracy record
     conspiracy.rebels = rebels
     conspiracy.loyalists = loyalists
     await session.commit()
-
-    # --- Update live message ---
-    king = await get_king(session)
-    king_name = "Невідомий"
-    if king:
-        king_name = f"@{king.username}" if king.username else king.first_name
-
-    text = build_conspiracy_text(conspiracy, king_name)
-
-    try:
-        if conspiracy.message_id:
-            await bot.edit_message_text(
-                chat_id=conspiracy.chat_id,
-                message_id=conspiracy.message_id,
-                text=text,
-                reply_markup=conspiracy_keyboard(conspiracy.conspiracy_id),
-            )
-    except Exception:
-        logger.exception(
-            "Failed to update conspiracy %d live message", conspiracy_id
-        )
 
     return result_text
 
@@ -223,34 +210,52 @@ async def join_conspiracy(
 # ⚖️ Resolve Conspiracy
 # ═══════════════════════════════════════
 
-async def resolve_conspiracy(conspiracy_id: int, bot: Bot) -> None:
-    """
-    Resolve a conspiracy when the timer expires.
+async def run_conspiracy_battle(conspiracy_id: int, bot: Bot, chat_id: int, msg_id: int, rebel_total: int, loyalist_total: int, king_name: str, simulation: dict) -> None:
+    import asyncio
+    
+    def make_progress_bar(percent: int, length: int = 15) -> str:
+        filled = int((percent / 100) * length)
+        return "█" * filled + "░" * (length - filled)
 
-    Calculates:
-      rebel_power   = sum(rebels.values())   × random(0.8, 1.2)
-      loyalist_power = (king.army_size + sum(loyalists.values())) × random(0.8, 1.2)
+    history = simulation["history"]
+    for i, state in enumerate(history, 1):
+        await asyncio.sleep(60)
+        
+        total_alive = state["atk_alive"] + state["def_alive"]
+        rebel_chance = int((state["atk_alive"] / total_alive) * 100) if total_alive > 0 else 50
+        
+        progress = make_progress_bar(rebel_chance)
+        
+        text = (
+            f"🏰 <b>БІЙ ЗА ЗАЛІЗНИЙ ТРОН ТРИВАЄ! (Хвилина {i}/5)</b>\n\n"
+            f"Король: {king_name}\n\n"
+            f"⚔️ <b>Повстанці:</b>\n"
+            f"В строю: {state['atk_alive']} воїнів\n"
+            f"Втрати: {state['atk_losses']} воїнів\n\n"
+            f"👑 <b>Корона:</b>\n"
+            f"В строю: {state['def_alive']} воїнів\n"
+            f"Втрати: {state['def_losses']} воїнів\n\n"
+            f"📊 <b>Перевага:</b>\n"
+            f"Повстанці <code>[{progress}]</code> Корона\n"
+            f"({rebel_chance}% / {100 - rebel_chance}%)\n\n"
+            f"<i>Очікуйте завершення бою...</i>"
+        )
+        try:
+            await bot.edit_message_text(chat_id=chat_id, message_id=msg_id, text=text, parse_mode="HTML")
+        except Exception:
+            pass
 
-    If rebels win:
-      - King becomes a lord, loses all castles except one
-      - The rebel who committed the most army becomes the new King
+    await finish_conspiracy(conspiracy_id, bot, simulation)
 
-    If loyalists/king win:
-      - All rebels lose CONSPIRACY_LOSER_PENALTY (50%) of their army (min 1)
 
-    Updates conspiracy status and edits the live message.
-    """
+async def finish_conspiracy(conspiracy_id: int, bot: Bot, sim_result: dict = None) -> None:
     async with AsyncSessionLocal() as session:
         conspiracy = await session.get(Conspiracy, conspiracy_id)
-        if not conspiracy or conspiracy.status != "active":
-            logger.warning(
-                "Conspiracy %s not found or already resolved", conspiracy_id
-            )
+        if not conspiracy or conspiracy.status != "battling":
             return
 
         king = await get_king(session)
         if not king:
-            logger.error("Conspiracy %d: no king found during resolution", conspiracy_id)
             conspiracy.status = "failed"
             await session.commit()
             return
@@ -258,94 +263,132 @@ async def resolve_conspiracy(conspiracy_id: int, bot: Bot) -> None:
         rebels = conspiracy.rebels or {}
         loyalists = conspiracy.loyalists or {}
 
-        # --- Calculate power ---
         rebel_total = sum(rebels.values()) if rebels else 0
-        loyalist_total = (
-            king.army_size + sum(loyalists.values())
-        ) if loyalists else king.army_size
+        loyalist_total = king.army_size + sum(loyalists.values())
 
-        rebel_power = rebel_total * random.uniform(BATTLE_RAND_MIN, BATTLE_RAND_MAX)
-        loyalist_power = loyalist_total * random.uniform(
-            BATTLE_RAND_MIN, BATTLE_RAND_MAX
-        )
+        if not sim_result:
+            from bot.services.battle import simulate_combat
+            sim_result = simulate_combat(rebel_total, loyalist_total)
 
         king_name = f"@{king.username}" if king.username else king.first_name
 
-        if rebel_power > loyalist_power and rebel_total > 0:
-            # ═══ REBELS WIN ═══
+        if sim_result["winner"] == "attacker" and rebel_total > 0:
             conspiracy.status = "won"
+            surviving = sim_result["atk_alive"]
+            spoils = loyalist_total
+            total_distribute = surviving + spoils
 
-            # Find the rebel with the most army committed
-            new_king_uid = max(rebels, key=rebels.get)
-            new_king = await get_user(session, int(new_king_uid))
+            for uid_str, commit in rebels.items():
+                u = await get_user(session, int(uid_str))
+                if u:
+                    share = int(total_distribute * (commit / rebel_total))
+                    u.army_size += share
 
-            # Dethrone old king: becomes lord, loses all castles except one
+            king.army_size = 1
             king.role = "lord"
             king_castles = await get_user_castles(session, king.user_id)
-            if len(king_castles) > 1:
-                # Keep only the first castle, release the rest
-                for castle in king_castles[1:]:
-                    castle.owner_id = None
+            non_crownlands = [c for c in king_castles if c.name != "Королівські Землі"]
+            
+            if non_crownlands:
+                kept_castle = non_crownlands[0]
+                for castle in king_castles:
+                    if castle.castle_id != kept_castle.castle_id and castle.name != "Королівські Землі":
+                        castle.owner_id = None
+            else:
+                for castle in king_castles:
+                    if castle.name != "Королівські Землі":
+                        castle.owner_id = None
 
-            # Crown new king
+            new_king_uid = max(rebels, key=rebels.get)
+            new_king = await get_user(session, int(new_king_uid))
             if new_king:
                 new_king.role = "king"
-                new_king_name = (
-                    f"@{new_king.username}" if new_king.username else new_king.first_name
-                )
+                new_king_name = f"@{new_king.username}" if new_king.username else new_king.first_name
+                crown_res = await session.execute(select(Castle).where(Castle.name == "Королівські Землі"))
+                crown_castle = crown_res.scalar_one_or_none()
+                if crown_castle:
+                    crown_castle.owner_id = new_king.user_id
             else:
                 new_king_name = "Невідомий Лорд"
 
-            text = msg.CONSPIRACY_WON.format(
-                rebel_power=round(rebel_power),
-                loyalist_power=round(loyalist_power),
-                new_king_name=new_king_name,
-            )
-
-            logger.info(
-                "Conspiracy %d: REBELS WON — new king is %s",
-                conspiracy_id, new_king_uid,
-            )
+            text = f"⚔️ <b>ВЕЛИКА ЗМОВА ВДАЛАСЯ!</b>\n\nПовстанці здолали лоялістів та повалили Короля {king_name}!\n\n👑 Новий Король: {new_king_name}\n💪 Вижило повстанців: {sim_result['atk_alive']}\n🛡️ Втрати Корони: {sim_result['def_losses']}\n\n🩸 <i>Лоялісти та Король втратили всі надіслані війська. Повстанці розділили їх як трофеї!</i>"
         else:
-            # ═══ KING WINS ═══
             conspiracy.status = "failed"
+            surviving = sim_result["def_alive"]
+            spoils = rebel_total
+            total_distribute = surviving + spoils
 
-            # Punish rebels: lose CONSPIRACY_LOSER_PENALTY of army
-            for uid_str in rebels:
-                rebel_user = await get_user(session, int(uid_str))
-                if rebel_user:
-                    penalty = int(rebel_user.army_size * CONSPIRACY_LOSER_PENALTY)
-                    rebel_user.army_size = max(1, rebel_user.army_size - penalty)
+            king_commit = king.army_size
+            king.army_size = 0
 
-            text = msg.CONSPIRACY_FAILED.format(
-                king_name=king_name,
-                rebel_power=round(rebel_power),
-                loyalist_power=round(loyalist_power),
-            )
+            if loyalist_total > 0:
+                for uid_str, commit in loyalists.items():
+                    u = await get_user(session, int(uid_str))
+                    if u:
+                        share = int(total_distribute * (commit / loyalist_total))
+                        u.army_size += share
 
-            logger.info(
-                "Conspiracy %d: KING WON — rebels punished", conspiracy_id
-            )
+                king_share = int(total_distribute * (king_commit / loyalist_total))
+                king.army_size += king_share
+            else:
+                king.army_size = 1
+
+            text = f"🛡️ <b>ЗМОВУ ПРИДУШЕНО!</b>\n\nКороль {king_name} та лоялісти успішно відбили заколот!\n\n💪 Вижило лоялістів: {sim_result['def_alive']}\n⚔️ Втрати повстанців: {sim_result['atk_losses']}\n\n🩸 <i>Повстанці втратили всі надіслані війська. Лоялісти розділили їх як трофеї!</i>"
 
         await session.commit()
 
-        # --- Edit live message with result ---
         try:
-            if conspiracy.message_id:
-                await bot.edit_message_text(
-                    chat_id=conspiracy.chat_id,
-                    message_id=conspiracy.message_id,
-                    text=text,
-                    reply_markup=None,  # Remove voting buttons
-                )
-            else:
-                await bot.send_message(chat_id=conspiracy.chat_id, text=text)
+            from config.config import CHAT_ID
+            await bot.send_message(chat_id=CHAT_ID, text=text)
         except Exception:
-            logger.exception("Failed to edit conspiracy result message")
-            try:
-                await bot.send_message(chat_id=conspiracy.chat_id, text=text)
-            except Exception:
-                logger.exception("Failed to send fallback conspiracy result message")
+            logger.exception("Failed to send conspiracy result message to group")
+
+async def resolve_conspiracy(conspiracy_id: int, bot: Bot) -> None:
+    """
+    Called when the voting timer expires. Starts the battle phase.
+    """
+    import asyncio
+    async with AsyncSessionLocal() as session:
+        conspiracy = await session.get(Conspiracy, conspiracy_id)
+        if not conspiracy or conspiracy.status != "active":
+            return
+
+        king = await get_king(session)
+        if not king:
+            conspiracy.status = "failed"
+            await session.commit()
+            return
+            
+        conspiracy.status = "battling"
+        await session.commit()
+
+        rebels = conspiracy.rebels or {}
+        loyalists = conspiracy.loyalists or {}
+        rebel_total = sum(rebels.values()) if rebels else 0
+        loyalist_total = king.army_size + sum(loyalists.values())
+
+        rebel_power = rebel_total * random.uniform(0.8, 1.2)
+        loyalist_power = loyalist_total * random.uniform(0.8, 1.2)
+        king_name = f"@{king.username}" if king.username else king.first_name
+
+        try:
+            from config.config import CHAT_ID
+            from bot.services.battle import simulate_combat
+            
+            sim_result = simulate_combat(rebel_total, loyalist_total)
+            
+            rebel_chance = int((rebel_total / (rebel_total + loyalist_total)) * 100) if (rebel_total + loyalist_total) > 0 else 50
+            
+            text = f"🏰 <b>БІЙ ЗА ЗАЛІЗНИЙ ТРОН РОЗПОЧАВСЯ!</b>\n\nВійська повстанців атакують браму!\n\nКороль: {king_name}\nШанс повстанців: {rebel_chance}%\nШанс Корони: {100 - rebel_chance}%\n\n<i>Очікуйте завершення бою...</i>"
+            
+            msg = await bot.send_message(chat_id=CHAT_ID, text=text)
+            
+            # Start the background task for dynamic updates
+            asyncio.create_task(run_conspiracy_battle(conspiracy_id, bot, CHAT_ID, msg.message_id, rebel_total, loyalist_total, king_name, sim_result))
+        except Exception:
+            logger.exception("Failed to start conspiracy battle message")
+            # Fallback directly to finish
+            await finish_conspiracy(conspiracy_id, bot, sim_result)
 
 
 # ═══════════════════════════════════════
@@ -369,4 +412,5 @@ def build_conspiracy_text(
         king_name=king_name,
         rebel_count=rebel_count,
         loyalist_count=loyalist_count,
+        duration=CONSPIRACY_DURATION_MINUTES,
     )

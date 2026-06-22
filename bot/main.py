@@ -19,10 +19,9 @@ from bot.models.db import init_db
 from bot.handlers.common import router as common_router
 from bot.handlers.war import router as war_router
 from bot.handlers.conspiracy import router as conspiracy_router
-from bot.handlers.puppet import router as puppet_router
 from bot.handlers.alliance import router as alliance_router
 from bot.handlers.king import router as king_router
-from bot.middlewares.activity import ActivityTrackingMiddleware
+from bot.handlers.poll import router as poll_router
 from bot.middlewares.antiflood import ThrottlingMiddleware
 from bot.services.scheduler import setup_scheduler, scheduler
 from bot.api import setup_api
@@ -69,11 +68,15 @@ async def main() -> None:
     dp = Dispatcher(storage=MemoryStorage())
 
     # Register middlewares
-    dp.message.middleware(ActivityTrackingMiddleware())
     dp.callback_query.middleware(ThrottlingMiddleware())
 
     # Register routers
     dp.include_router(common_router)
+    dp.include_router(king_router)
+    dp.include_router(poll_router)
+    dp.include_router(conspiracy_router)
+    dp.include_router(war_router)
+    dp.include_router(alliance_router)
 
     # Start APScheduler (economy tick, daily tick)
     setup_scheduler(bot)

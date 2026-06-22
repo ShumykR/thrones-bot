@@ -14,7 +14,12 @@ from apscheduler.triggers.interval import IntervalTrigger
 
 from aiogram import Bot
 
-from config.config import BATTLE_RESOLVE_MINUTES
+from config.config import (
+    BATTLE_RESOLVE_MINUTES, 
+    ECONOMY_INTERVAL_MINUTES, 
+    DAILY_INTERVAL_MINUTES, 
+    POLL_INTERVAL_MINUTES
+)
 
 logger = logging.getLogger(__name__)
 
@@ -29,23 +34,42 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
     """
     from bot.services.economy import economy_tick, daily_tick
 
-    # Hourly economy tick — every hour at :00
+    # Hourly economy tick
     scheduler.add_job(
         economy_tick,
-        trigger=IntervalTrigger(hours=1),
+        trigger=IntervalTrigger(minutes=ECONOMY_INTERVAL_MINUTES),
         args=[bot],
         id="economy_tick",
         name="💰 Hourly Economy Tick",
         replace_existing=True,
     )
 
-    # Daily tick — every day at 12:00 UTC
+    # Daily tick
     scheduler.add_job(
         daily_tick,
-        trigger=CronTrigger(hour=12, minute=0),
+        trigger=IntervalTrigger(minutes=DAILY_INTERVAL_MINUTES),
         args=[bot],
         id="daily_tick",
         name="📅 Daily Tick (IP + Events)",
+        replace_existing=True,
+    )
+
+    # Daily poll broadcast
+    scheduler.add_job(
+        broadcast_poll,
+        trigger=IntervalTrigger(minutes=POLL_INTERVAL_MINUTES),
+        args=[bot],
+        id="poll_tick",
+        name="📜 Daily Secret Poll",
+        replace_existing=True,
+    )
+
+    scheduler.add_job(
+        check_expired_conspiracies,
+        trigger=IntervalTrigger(minutes=1),
+        args=[bot],
+        id="check_expired_conspiracies",
+        name="🗡️ Check Expired Conspiracies",
         replace_existing=True,
     )
 
@@ -53,6 +77,67 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
     logger.info("⏰ APScheduler started with %d jobs", len(scheduler.get_jobs()))
 
     return scheduler
+
+
+async def check_expired_conspiracies(bot: Bot) -> None:
+    """Check for and resolve conspiracies that have expired but were missed by the scheduler."""
+    from bot.models.db import AsyncSessionLocal, Conspiracy
+    from bot.services.conspiracy import resolve_conspiracy, finish_conspiracy
+    from sqlalchemy import select, or_, and_
+    from datetime import datetime, timedelta
+    
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(Conspiracy).where(
+                or_(
+                    and_(Conspiracy.status == "active", Conspiracy.expires_at <= datetime.utcnow()),
+                    and_(Conspiracy.status == "battling", Conspiracy.expires_at <= datetime.utcnow() - timedelta(minutes=10))
+                )
+            )
+        )
+        expired = result.scalars().all()
+        
+    for consp in expired:
+        if consp.status == "active":
+            logger.info(f"Auto-resolving expired conspiracy {consp.conspiracy_id}")
+            await resolve_conspiracy(consp.conspiracy_id, bot)
+        elif consp.status == "battling":
+            logger.info(f"Auto-finishing stuck battling conspiracy {consp.conspiracy_id}")
+            await finish_conspiracy(consp.conspiracy_id, bot)
+
+
+async def broadcast_poll(bot: Bot) -> None:
+    """Send secret opinion poll to all users except the king."""
+    from bot.models.db import AsyncSessionLocal, User, get_king
+    from bot.handlers.poll import PollOpinionCallback
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    from sqlalchemy import select
+    
+    markup = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="👍 Хороша", callback_data=PollOpinionCallback(opinion="good").pack()),
+            InlineKeyboardButton(text="👎 Погана", callback_data=PollOpinionCallback(opinion="bad").pack()),
+            InlineKeyboardButton(text="😐 Нейтральна", callback_data=PollOpinionCallback(opinion="neutral").pack())
+        ]
+    ])
+    
+    async with AsyncSessionLocal() as session:
+        king = await get_king(session)
+        king_id = king.user_id if king else None
+        
+        users = (await session.execute(select(User))).scalars().all()
+        for u in users:
+            if u.user_id == king_id:
+                continue
+                
+            try:
+                await bot.send_message(
+                    chat_id=u.user_id,
+                    text="👀 <b>Таємне Опитування</b>\n\nЩо ви думаєте про правління поточного Короля?\nВаша відповідь абсолютно таємна і не впливає на ваші дії у Великій Змові.",
+                    reply_markup=markup
+                )
+            except Exception as e:
+                logger.error(f"Failed to send poll to {u.user_id}: {e}")
 
 
 def schedule_battle_resolution(battle_id: int, bot: Bot) -> None:
@@ -102,3 +187,25 @@ def schedule_conspiracy_resolution(
         "Conspiracy %d resolution scheduled at %s",
         conspiracy_id, expires_at.isoformat(),
     )
+
+
+def schedule_king_conspiracy_notification(
+    conspiracy_id: int, bot: Bot
+) -> None:
+    """Schedule a random notification to the King about the conspiracy."""
+    import random
+    from bot.services.conspiracy import notify_king_conspiracy
+    
+    # Random delay between 1 and 60 minutes
+    delay_minutes = random.randint(1, 60)
+    run_date = datetime.utcnow() + timedelta(minutes=delay_minutes)
+    
+    scheduler.add_job(
+        notify_king_conspiracy,
+        trigger=DateTrigger(run_date=run_date),
+        args=[conspiracy_id, bot],
+        id=f"notify_king_consp_{conspiracy_id}",
+        name=f"👑 Notify King of Conspiracy #{conspiracy_id}",
+        replace_existing=True,
+    )
+    logger.info(f"Scheduled King notification for conspiracy {conspiracy_id} in {delay_minutes} minutes")

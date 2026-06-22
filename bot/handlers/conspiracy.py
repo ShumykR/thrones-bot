@@ -55,15 +55,11 @@ async def conspiracy_vote_handler(
                 logger.exception("Failed to send unregistered message")
             return
 
-        # Commit half of user's army
-        army_to_commit = max(1, user.army_size // 2)
-
         result_text = await join_conspiracy(
             session=session,
             conspiracy_id=conspiracy_id,
             user_id=user_id,
             side=side,
-            army_to_commit=army_to_commit,
             bot=bot,
         )
 
