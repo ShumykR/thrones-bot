@@ -26,7 +26,7 @@ from bot.models.db import (
 )
 from bot.keyboards.inline import conspiracy_keyboard
 from bot.texts import messages as msg
-from config.config import CONSPIRACY_DURATION_MINUTES
+from config.config import CONSPIRACY_DURATION_MINUTES, CONSPIRACY_REBEL_DEFAULT_PCT
 
 logger = logging.getLogger(__name__)
 
@@ -184,8 +184,7 @@ async def join_conspiracy(
 
     if side == "neutral":
         result_text = "🕊️ Ви обрали нейтралітет."
-    from config.config import CONSPIRACY_REBEL_DEFAULT_PCT
-    if side == "rebel":
+    elif side == "rebel":
         army_to_commit = max(1, int(user.army_size * CONSPIRACY_REBEL_DEFAULT_PCT))
         user.army_size -= army_to_commit
         rebels[uid_str] = army_to_commit

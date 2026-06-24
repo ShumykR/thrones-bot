@@ -520,9 +520,6 @@ async def api_garrison(request: web.Request) -> web.Response:
     except ValueError:
         return web.json_response({"error": "Invalid parameters"}, status=400)
 
-    if amount == 0:
-        return web.json_response({"error": "Invalid amount"}, status=400)
-
     async with AsyncSessionLocal() as session:
         user = await get_user(session, user_id)
         if not user:
@@ -674,8 +671,8 @@ async def api_scout(request: web.Request) -> web.Response:
     except Exception:
         return web.json_response({"error": "Invalid data"}, status=400)
 
-    if amount <= 0:
-        return web.json_response({"error": "Кількість розвідників має бути більше 0!"}, status=400)
+    if amount < 10:
+        return web.json_response({"error": "Мінімальний загін розвідників — 10 воїнів!"}, status=400)
 
     async with AsyncSessionLocal() as session:
         user = await get_user(session, user_id)
@@ -691,10 +688,10 @@ async def api_scout(request: web.Request) -> web.Response:
         user.army_size -= amount
         
         import random
-        # Base chance: 20% + 2% per scout (40 scouts gives almost max chance)
-        chance = min(95.0, 20.0 + (amount * 2.0))
-        # Detection chance: 5% base + 0.5% per scout
-        detect_chance = min(40.0, 5.0 + (amount * 0.5))
+        # Base chance: 50% + 1.5% per scout (so 10 scouts = 65% success, 30 scouts = 95%)
+        chance = min(95.0, 50.0 + (amount * 1.5))
+        # Detection chance: 15% base + 0.5% per scout
+        detect_chance = min(50.0, 15.0 + (amount * 0.5))
         
         is_success = random.uniform(0, 100) <= chance
         is_detected = random.uniform(0, 100) <= detect_chance
@@ -704,10 +701,9 @@ async def api_scout(request: web.Request) -> web.Response:
             await session.commit()
             return web.json_response({"error": f"Ваших розвідників виявили і захопили! Ви втратили {amount} воїнів.", "garrison": None}, status=400)
             
-        # Scouts return safely if not captured
-        user.army_size += amount
-            
         if is_success:
+            # Scouts return safely if successful
+            user.army_size += amount
             from bot.models.db import ScoutReport
             from datetime import datetime
             

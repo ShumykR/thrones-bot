@@ -29,6 +29,9 @@ from bot.api import setup_api
 
 def setup_logging() -> None:
     """Configure logging for the bot."""
+    if sys.platform == "win32":
+        sys.stdout.reconfigure(encoding='utf-8')
+        
     logging.basicConfig(
         level=getattr(logging, LOG_LEVEL.upper(), logging.INFO),
         format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",

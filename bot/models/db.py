@@ -55,7 +55,7 @@ class User(Base):
     role: str = Column(String, nullable=False, default="lord")     # 'lord' | 'king'
     army_size: int = Column(Integer, nullable=False, default=100)
     alliance_id: Optional[int] = Column(
-        Integer, ForeignKey("alliances.alliance_id"), nullable=True
+        Integer, ForeignKey("alliances.alliance_id", use_alter=True), nullable=True
     )
     activity_count: int = Column(Integer, nullable=False, default=0)
     muted_until: Optional[datetime] = Column(DateTime, nullable=True)
@@ -90,7 +90,8 @@ class Castle(Base):
         BigInteger, ForeignKey("users.user_id"), nullable=True
     )
     garrison: int = Column(Integer, nullable=False, default=0)
-    army_per_hour: int = Column(Integer, nullable=False, default=10)
+    from config.config import CASTLE_INCOME
+    army_per_hour: int = Column(Integer, nullable=False, default=CASTLE_INCOME)
 
     owner = relationship(
         "User", back_populates="castles", foreign_keys=[owner_id]
@@ -109,7 +110,7 @@ class Alliance(Base):
 
     alliance_id: int = Column(Integer, primary_key=True, autoincrement=True)
     name: str = Column(String, unique=True, nullable=False)
-    leader_id: int = Column(BigInteger, ForeignKey("users.user_id"), nullable=False)
+    leader_id: int = Column(BigInteger, ForeignKey("users.user_id", use_alter=True), nullable=False)
     created_at: datetime = Column(DateTime, nullable=False, default=datetime.utcnow)
 
     members = relationship(

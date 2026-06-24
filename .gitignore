@@ -9,3 +9,6 @@ __pycache__/
 # Databases
 *.db
 *.db-journal
+
+tests
+.coverage

@@ -134,7 +134,10 @@ async def order_callback_handler(
 
     async with AsyncSessionLocal() as session:
         target = await get_user(session, target_id)
-        
+        if not target:
+            await query.answer("Лорд не знайдений!", show_alert=True)
+            return
+            
         result = await session.execute(select(User).where(User.role == "king"))
         king = result.scalar_one_or_none()
         

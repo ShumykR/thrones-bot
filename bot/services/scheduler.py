@@ -73,10 +73,49 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
         replace_existing=True,
     )
 
+    scheduler.add_job(
+        check_unowned_castles,
+        trigger=IntervalTrigger(minutes=10),
+        args=[bot],
+        id="check_unowned_castles",
+        name="🏰 Check Unowned Castles",
+        replace_existing=True,
+    )
+
     scheduler.start()
     logger.info("⏰ APScheduler started with %d jobs", len(scheduler.get_jobs()))
 
     return scheduler
+
+
+async def check_unowned_castles(bot: Bot) -> None:
+    """If 24h passed since first user, give unowned castles a garrison."""
+    from bot.models.db import AsyncSessionLocal, User, Castle
+    from sqlalchemy import select, func
+    from datetime import datetime, timedelta
+    
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(select(func.min(User.created_at)))
+        first_created = result.scalar()
+        if not first_created:
+            return
+            
+        if datetime.utcnow() - first_created > timedelta(hours=24):
+            # Check if NPC exists
+            npc = await session.get(User, 0)
+            if not npc:
+                npc = User(user_id=0, username="wildlings", first_name="Дикуни", role="npc", army_size=10000)
+                session.add(npc)
+                await session.flush()
+
+            castles_res = await session.execute(select(Castle).where(Castle.owner_id == None))
+            unowned = castles_res.scalars().all()
+            if unowned:
+                for c in unowned:
+                    c.owner_id = 0
+                    c.garrison = 500  # Default NPC garrison
+                await session.commit()
+                logger.info(f"🏰 {len(unowned)} unowned castles were claimed by the Wildlings!")
 
 
 async def check_expired_conspiracies(bot: Bot) -> None:
