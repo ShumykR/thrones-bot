@@ -186,6 +186,28 @@ async def init_db() -> None:
     """Create all tables and seed castles if the castles table is empty."""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        
+    # Check if castles exist, if not, seed them
+    async with AsyncSessionLocal() as session:
+        from sqlalchemy import select
+        res = await session.execute(select(Castle).limit(1))
+        if not res.scalar_one_or_none():
+            lands_data = [
+                (1, "Землі за Стіною", 10),
+                (2, "Північ", 20),
+                (3, "Західні Землі", 25),
+                (4, "Залізні Острови", 10),
+                (5, "Долина Аррен", 20),
+                (6, "Королівські Землі", 30),
+                (7, "Дорн", 15),
+                (8, "Простір", 25),
+                (9, "Штормові Землі", 20),
+                (10, "Річкові Землі", 15)
+            ]
+            for c_id, name, aph in lands_data:
+                session.add(Castle(castle_id=c_id, name=name, army_per_hour=aph, garrison=0))
+            await session.commit()
+            print("🏰 Castles automatically seeded into the new database.")
 
 # ═══════════════════════════════════════
 # 🔍 Common Query Helpers
