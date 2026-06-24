@@ -338,6 +338,7 @@ export default function ThroneView({ state, me, tg, reloadData }) {
                           style={{ background: '#10b981' }}
                           disabled={!demandCastleId}
                           onClick={() => {
+                            console.error("DEMAND CASTLE BTN CLICKED", demandCastleId);
                             tg?.showConfirm(`Вимагати замок ${demandCastleId} у лорда ${targetUser.name}?`, (confirm) => {
                               if (confirm) handleKingAction('/api/order', { order_type: 'castle', value: demandCastleId });
                             });

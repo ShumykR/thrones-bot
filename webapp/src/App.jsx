@@ -5,11 +5,10 @@ import MapView from './components/MapView';
 import ProfileView from './components/ProfileView';
 import ThroneView from './components/ThroneView';
 
-// Initialize Telegram WebApp
-const tg = window.Telegram?.WebApp;
-const initData = tg?.initData || '';
-
 export default function App() {
+  const tg = window.Telegram?.WebApp;
+  const initData = tg?.initData || '';
+
   const [activeTab, setActiveTab] = useState('map');
   const [loading, setLoading] = useState(true);
   const [me, setMe] = useState(null);
@@ -67,7 +66,7 @@ export default function App() {
 
   const handleAttack = async (castleId, amount) => {
     if (!initData) {
-      alert(`Attacking castle ${castleId} with ${amount}`);
+      window.alert(`Attacking castle ${castleId} with ${amount}`);
       return;
     }
     

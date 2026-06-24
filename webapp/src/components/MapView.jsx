@@ -147,6 +147,9 @@ function CastleModal({ castle, state, me, config, onClose, onAttack, tg, scouted
   const [attackAmount, setAttackAmount] = useState(state.config?.min_attack_army || 100);
   const [garrisonTransfer, setGarrisonTransfer] = useState(0); 
   const [scoutAmount, setScoutAmount] = useState(10);
+  const [showConspiracySlider, setShowConspiracySlider] = useState(false);
+  const minConspiracyAmount = Math.ceil((me?.army_size || 0) * 0.70);
+  const [conspiracyAmount, setConspiracyAmount] = useState(minConspiracyAmount);
   
   useEffect(() => {
     if (castle) {
@@ -160,7 +163,7 @@ function CastleModal({ castle, state, me, config, onClose, onAttack, tg, scouted
 
   const isMine = castle.owner?.id === me.user_id;
   const isScouted = isMine || scoutedCastles[castle.id] !== undefined || (state.scouted_castles && state.scouted_castles[castle.id] !== undefined);
-  const displayGarrison = isScouted ? (isMine ? castle.garrison : (scoutedCastles[castle.id] ?? state.scouted_castles[castle.id])) : "???";
+  const displayGarrison = isScouted ? (isMine ? castle.garrison : (scoutedCastles[castle.id] ?? state.scouted_castles?.[castle.id]?.garrison)) : "???";
   const isKing = state.king && me && state.king.id === me.user_id;
   const canAttack = !isMine && me.army_size >= (state.config?.min_attack_army || 100) && castle.name !== "Королівські Землі";
 
